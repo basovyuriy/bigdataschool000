@@ -1,0 +1,165 @@
+### www.hadoopinrealworld ###
+### Spark Developer In Real World ###
+### Handling Late Events In Streaming ###
+
+#### KAFKA ####
+
+//Listen to topic
+kafka-console-consumer --bootstrap-server ip-172-31-41-26.ec2.internal:9092 --topic hirw-iot-sink
+
+################
+
+spark-shell --master yarn --packages com.amazonaws:aws-java-sdk-pom:1.10.34,org.apache.hadoop:hadoop-aws:2.7.0,org.apache.spark:spark-sql-kafka-0-10_2.11:2.3.0
+
+import org.apache.spark.sql._
+import org.apache.spark.sql.types._ 
+
+val userSchema = new StructType()
+ .add("Arrival_Time", "string")
+ .add("Creation_Time", "string")
+ .add("Device", "string").add("gt", "string")
+
+val iot = spark.readStream.format("json")
+ .schema(userSchema)
+ .option("path", "s3a://iot-activity-data")
+ .load()
+
+val iot_event_time = iot.withColumn("event_time", (col("Creation_Time").cast("double")/1000000000).cast("timestamp"))
+
+val iot_group_win = iot_event_time
+ .withWatermark("event_time", "10 minutes")
+ .groupBy(window(col("event_time"), "10 minutes"))
+ .count() 
+
+val iot_key_val = iot_group_win.withColumn("key", lit(100))
+ .select(col("key").cast("string"), concat(col("window.start").cast("string"), lit(" to "), col("window.end").cast("string"), lit(" "), col("count")).alias("value"))
+
+val stream = iot_key_val.writeStream
+ .format("kafka")
+ .option("kafka.bootstrap.servers", "ip-172-31-41-26.ec2.internal:9092")
+ .option("topic", "hirw-iot-sink")
+ .option("checkpointLocation", "hdfs://ip-172-31-40-242.ec2.internal:8020/user/hirw/stream/chkpt")
+ .outputMode("update")
+ .start()
+
+File 1 --max event_time 2015-02-23 10:49
+File 2 --max event_time 2015-02-23 10:56 
+File 3 --max event_time 2015-02-23 11:18
+
+
+
+## UPDATE WITH OUT WATER MARK ##
+
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 9
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11
+
+2015-02-23 10:20:00 to 2015-02-23 10:30:00 16
+2015-02-23 10:50:00 to 2015-02-23 11:00:00 17
+
+2015-02-23 11:10:00 to 2015-02-23 11:20:00 13
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 19
+
+
+## UPDATE WITH WATER MARK ##
+
+Trigger 1 - no threshold
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 9
+
+Trigger 2 - 2015-02-23 10:39
+2015-02-23 10:50:00 to 2015-02-23 11:00:00 17
+
+Trigger 3 - 2015-02-23 10:46 
+2015-02-23 11:10:00 to 2015-02-23 11:20:00 13
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 19
+
+
+#### MIN EVENT_TIME ###
+
+import org.apache.spark.sql._
+import org.apache.spark.sql.types._ 
+
+val userSchema = new StructType()
+ .add("Arrival_Time", "string")
+ .add("Creation_Time", "string")
+ .add("Device", "string")
+ .add("gt", "string")
+
+val iot_2 = spark.read.format("json")
+ .schema(userSchema)
+ .option("path", "s3a://iot-activity-data/3-stairsdown.json")
+ .load()
+
+val iot_event_time_2 = iot_2.withColumn("event_time", (col("Creation_Time").cast("double")/1000000000).cast("timestamp"))
+
+val min_event_time = iot_event_time_2.agg(min("event_time"))
+
+min_event_time.show()
+
+
+### COMPLETE WITH WATERMARK ###
+
+import org.apache.spark.sql._
+import org.apache.spark.sql.types._ 
+
+val userSchema = new StructType()
+ .add("Arrival_Time", "string")
+ .add("Creation_Time", "string")
+ .add("Device", "string").add("gt", "string")
+
+val iot = spark.readStream.format("json")
+ .schema(userSchema)
+ .option("path", "s3a://iot-activity-data")
+ .load()
+
+val iot_event_time = iot.withColumn("event_time", (col("Creation_Time").cast("double")/1000000000).cast("timestamp"))
+
+val iot_group_win = iot_event_time
+ .withWatermark("event_time", "10 minutes")
+ .groupBy(window(col("event_time"), "10 minutes"))
+ .count() 
+
+val iot_key_val = iot_group_win.withColumn("key", lit(100))
+ .select(col("key").cast("string"), concat(col("window.start").cast("string"), lit(" to "), col("window.end").cast("string"), lit(" "), col("count")).alias("value"))
+
+val stream = iot_key_val.writeStream
+ .format("kafka")
+ .option("kafka.bootstrap.servers", "ip-172-31-41-26.ec2.internal:9092")
+ .option("topic", "hirw-iot-sink")
+ .option("checkpointLocation", "hdfs://ip-172-31-40-242.ec2.internal:8020/user/hirw/stream/chkpt")
+ .outputMode("complete")
+ .start()
+ 
+ 
+## COMPLETE WITH OUT WATER MARK ##
+
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 9
+
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 9
+2015-02-23 10:20:00 to 2015-02-23 10:30:00 16
+2015-02-23 10:50:00 to 2015-02-23 11:00:00 17
+
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11
+2015-02-23 11:10:00 to 2015-02-23 11:20:00 13
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 19
+2015-02-23 10:20:00 to 2015-02-23 10:30:00 16
+2015-02-23 10:50:00 to 2015-02-23 11:00:00 17
+
+
+## COMPLETE WITH WATER MARK ##
+
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 9
+
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 9
+2015-02-23 10:20:00 to 2015-02-23 10:30:00 16
+2015-02-23 10:50:00 to 2015-02-23 11:00:00 17
+
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11
+2015-02-23 11:10:00 to 2015-02-23 11:20:00 13
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 19
+2015-02-23 10:20:00 to 2015-02-23 10:30:00 16
+2015-02-23 10:50:00 to 2015-02-23 11:00:00 17

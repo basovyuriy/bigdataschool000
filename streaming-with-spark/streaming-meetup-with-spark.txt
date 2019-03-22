@@ -1,0 +1,29 @@
+### www.hadoopinrealworld ###
+### Spark Developer In Real World ###
+### Streaming Meetup.com with Spark###
+
+
+### START KAFKA PRODUCER TO GET MESSAGES FROM MEETUP.COM ###
+
+java -cp /spark-workshop/meetup/SparkMeetupKafka-1.0.jar:/home/ubuntu/confluent-4.0.0/share/java/kafka/*:/home/ubuntu/confluent-4.0.0/share/java/confluent-common/*:/home/ubuntu/confluent-4.0.0/share/java/schema-registry/*:/spark-workshop/meetup/additional-jars/* com.hirw.kafka.KafkaMeetupProducerAvro
+
+### LISTEN TO KAFKA TOPIC (RSVPs) ###
+
+kafka-console-consumer --bootstrap-server ip-172-31-41-26.ec2.internal:9092 --topic hirw-meetup-topic-serial
+
+
+### CLEAR CHECKPOINT DIRECTORY BEFORE STARTUP ###
+
+hadoop fs -rm -r /user/hirw/stream/chkpt/*
+
+### START SPARK STREAMING TO PROCESS RSVPs FROM KAFKA ###
+
+spark-submit --class com.hirw.spark.Meetup \
+--master yarn \
+--jars /spark-workshop/meetup/additional-jars/spark-sql-kafka-0-10_2.11-2.3.0.jar,/spark-workshop/meetup/additional-jars/kafka-clients-1.1.0.jar \
+/spark-workshop/meetup/Meetup-1.0.jar
+
+
+### LISTEN TO KAFKA TOPIC (STREAM OUTPUT) ###
+
+kafka-console-consumer --bootstrap-server ip-172-31-41-26.ec2.internal:9092 --topic hirw-meetup-sink

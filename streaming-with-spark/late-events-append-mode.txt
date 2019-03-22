@@ -1,0 +1,72 @@
+### www.hadoopinrealworld ###
+### Spark Developer In Real World ###
+### Late Events & Append Mode ###
+
+import org.apache.spark.sql._
+import org.apache.spark.sql.types._ 
+
+val userSchema = new StructType()
+ .add("Arrival_Time", "string")
+ .add("Creation_Time", "string")
+ .add("Device", "string").add("gt", "string")
+
+val iot = spark.readStream.format("json")
+ .schema(userSchema)
+ .option("path", "s3a://iot-activity-data")
+ .load()
+
+val iot_event_time = iot.withColumn("event_time", (col("Creation_Time").cast("double")/1000000000).cast("timestamp"))
+
+val iot_group_win = iot_event_time
+ .withWatermark("event_time", "10 minutes")
+ .groupBy(window(col("event_time"), "10 minutes"))
+ .count() 
+
+val iot_key_val = iot_group_win.withColumn("key", lit(100))
+ .select(col("key").cast("string"), concat(col("window.start").cast("string"), lit(" to "), col("window.end").cast("string"), lit(" "), col("count")).alias("value"))
+
+val stream = iot_key_val.writeStream
+ .format("kafka")
+ .option("kafka.bootstrap.servers", "ip-172-31-41-26.ec2.internal:9092")
+ .option("topic", "hirw-iot-sink")
+ .option("checkpointLocation", "hdfs://ip-172-31-40-242.ec2.internal:8020/user/hirw/stream/chkpt")
+ .outputMode("append")
+ .start()
+
+File 1 --max event_time 2015-02-23 10:49
+File 2 --max event_time 2015-02-23 10:56 
+File 3 --max event_time 2015-02-23 11:18
+
+
+## COMPLETE WITH OUT WATER MARK ##
+
+--After File 1 upload
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11 (File 1)
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 9  (File 1)
+
+--After File 2 upload
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11 (File 1)
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 9  (File 1)
+2015-02-23 10:20:00 to 2015-02-23 10:30:00 16 (File 2)
+2015-02-23 10:50:00 to 2015-02-23 11:00:00 17 (File 2)
+
+--After File 3 upload
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11 (File 1)
+2015-02-23 11:10:00 to 2015-02-23 11:20:00 13 (File 3)
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 19 (File 1+3)
+2015-02-23 10:20:00 to 2015-02-23 10:30:00 16 (File 2)
+2015-02-23 10:50:00 to 2015-02-23 11:00:00 17 (File 2)
+
+
+## APPEND WITH WATER MARK ##
+
+Nothing after File 1
+
+After File 2
+2015-02-23 10:10:00 to 2015-02-23 10:20:00 11
+
+Nothing after File 3
+
+After File 4
+2015-02-23 10:40:00 to 2015-02-23 10:50:00 19
+2015-02-23 10:50:00 to 2015-02-23 11:00:00 22

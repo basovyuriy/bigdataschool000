@@ -1,0 +1,56 @@
+### www.hadoopinrealworld ###
+### Spark Developer In Real World ###
+### Event Time, Window & Late Events ###
+
+#### KAFKA ####
+
+//Create topic in Kafka
+kafka-topics --create --zookeeper localhost:2181 --replication-factor 1 --partitions 3 --topic hirw-iot-sink
+
+//Listen to topic
+kafka-console-consumer --bootstrap-server ip-172-31-41-26.ec2.internal:9092 --topic hirw-iot-sink
+
+################
+
+spark-shell --master yarn --packages com.amazonaws:aws-java-sdk-pom:1.10.34,org.apache.hadoop:hadoop-aws:2.7.0,org.apache.spark:spark-sql-kafka-0-10_2.11:2.3.0
+
+import org.apache.spark.sql._
+import org.apache.spark.sql.types._ 
+
+val userSchema = new StructType()
+ .add("Arrival_Time", "string")
+ .add("Creation_Time", "string")
+ .add("Device", "string")
+ .add("gt", "string")
+
+val iot = spark.readStream.format("json")
+ .schema(userSchema)
+ .option("path", "s3a://iot-activity-data").load()
+
+val iot_event_time = iot.withColumn("event_time", (col("Creation_Time").cast("double")/1000000000).cast("timestamp"))
+
+val iot_group_win = iot_event_time.groupBy(window(col("event_time"), "10 minutes")).count() 
+
+val iot_key_val = iot_group_win.withColumn("key", lit(100))
+ .select(col("key").cast("string"), concat(col("window.start").cast("string"), lit(" to "), col("window.end").cast("string"), lit(" "), col("count")).alias("value"))
+
+//update output mode
+	
+val stream = iot_key_val.writeStream
+ .format("kafka")
+ .option("kafka.bootstrap.servers", "ip-172-31-41-26.ec2.internal:9092")
+ .option("topic", "hirw-iot-sink")
+ .option("checkpointLocation", "hdfs://ip-172-31-40-242.ec2.internal:8020/user/hirw/stream/chkpt")
+ .outputMode("update")
+ .start()
+ 
+//complete output mode
+
+val stream = iot_key_val.writeStream
+ .format("kafka")
+ .option("kafka.bootstrap.servers", "ip-172-31-41-26.ec2.internal:9092")
+ .option("topic", "hirw-iot-sink")
+ .option("checkpointLocation", "hdfs://ip-172-31-40-242.ec2.internal:8020/user/hirw/stream/chkpt")
+ .outputMode("complete")
+ .start()
+ 
